@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Panel de Evidencias - Compliance</title>
+    <!-- Tailwind CSS desde CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-100 text-slate-800 p-6 min-h-screen">
+
+    <div class="max-w-7xl mx-auto space-y-6">
+        
+        <!-- Header -->
+        <header class="flex justify-between items-center bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+            <div>
+                <h1 class="text-2xl font-bold text-slate-900">Gestor de Evidencias de Certificación</h1>
+                <p class="text-sm text-slate-500">Filtrado, asignación de roles estructurados y detección de archivos pendientes</p>
+            </div>
+            <div id="stats" class="hidden text-right space-x-2">
+                <span id="totalCount" class="text-sm font-semibold bg-slate-100 px-3 py-1.5 rounded-md border border-slate-300">Total: 0</span>
+                <span id="missingCount" class="text-sm font-semibold bg-red-100 text-red-700 px-3 py-1.5 rounded-md border border-red-200">Faltan: 0</span>
+            </div>
+        </header>
+
+        <!-- Input cURL -->
+        <section class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
+            <label for="curlInput" class="block text-sm font-medium text-slate-700">Pega aquí el comando cURL del día:</label>
+            <textarea id="curlInput" rows="3" class="w-full p-3 font-mono text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none" placeholder="curl --url 'https://multiframework.hackmetrix.com/...' -H 'authorization: Bearer ...'"></textarea>
+            
+            <div class="flex flex-wrap gap-4 items-center justify-between">
+                <button id="btnFetch" onclick="loadEvidences()" class="bg-blue-600 hover:bg-blue-700 text-white font-medium px-6 py-2.5 rounded-lg shadow-sm transition-all flex items-center gap-2">
+                    <span>Procesar y Cargar Evidencias</span>
+                </button>
+                <div id="loading" class="hidden text-sm font-medium text-blue-600 animate-pulse">Cargando datos de la API...</div>
+            </div>
+        </section>
+
+        <!-- Filtros -->
+        <section id="filterSection" class="hidden bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex flex-wrap gap-4 items-center justify-between">
+            <div class="flex flex-wrap gap-4 items-center">
+                <div>
+                    <label class="block text-xs text-slate-500 mb-1">Filtrar por Estado:</label>
+                    <select id="filterStatus" onchange="applyFilters()" class="border border-slate-300 text-sm rounded-lg p-2 focus:outline-none">
+                        <option value="ALL">Todos</option>
+                        <option value="MISSING" selected>Solo Faltantes por Importar</option>
+                        <option value="LOADED">Solo Cargados</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs text-slate-500 mb-1">Filtrar por Rol Responsable:</label>
+                    <select id="filterRole" onchange="applyFilters()" class="border border-slate-300 text-sm rounded-lg p-2 focus:outline-none">
+                        <option value="ALL">Todos los Roles</option>
+                        <option value="Líder de Infraestructura">Líder de Infraestructura</option>
+                        <option value="DBA">DBA</option>
+                        <option value="CTO">CTO</option>
+                        <option value="Líder de TI">Líder de TI</option>
+                        <option value="Gestión Humana">Gestión Humana</option>
+                        <option value="Gestión de Proveedores">Gestión de Proveedores</option>
+                        <option value="Gestión de Contratos">Gestión de Contratos</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs text-slate-500 mb-1">Filtrar por Actividad:</label>
+                    <select id="filterActivity" onchange="applyFilters()" class="border border-slate-300 text-sm rounded-lg p-2 focus:outline-none max-w-xs">
+                        <option value="ALL">Todas las Actividades</option>
+                    </select>
+                </div>
+            </div>
+            <div>
+                <input type="text" id="searchInput" onkeyup="applyFilters()" placeholder="Buscar por nombre, control o actividad..." class="border border-slate-300 text-sm rounded-lg p-2 w-64 focus:outline-none">
+            </div>
+        </section>
+
+        <!-- Tabla -->
+        <section class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+            <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse">
+                    <thead class="bg-slate-50 text-xs text-slate-500 uppercase border-b border-slate-200">
+                        <tr>
+                            <th class="py-3 px-4">Estado</th>
+                            <th class="py-3 px-4 cursor-pointer hover:bg-slate-100" onclick="sortTable('name')">Nombre Evidencia ⇅</th>
+                            <th class="py-3 px-4 cursor-pointer hover:bg-slate-100" onclick="sortTable('activityName')">Actividad ⇅</th>
+                            <th class="py-3 px-4">Código / Control</th>
+                            <th class="py-3 px-4">Rol Responsable</th>
+                            <th class="py-3 px-4">Captura / Evidencia Sugerida</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tableBody" class="divide-y divide-slate-100 text-sm text-slate-700">
+                        <tr>
+                            <td colspan="6" class="py-8 text-center text-slate-400">Pega el cURL arriba y presiona "Procesar y Cargar Evidencias"</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+    </div>
+
+    <script>
+        let globalEvidences = [];
+        let sortAsc = true;
+
+        // Clasificación por los 7 roles requeridos
+        function classifyEvidence(name) {
+            const n = (name || '').toLowerCase();
+
+            if (n.includes('base de datos') || n.includes('bd') || n.includes('database') || n.includes('backup') || n.includes('respaldos') || n.includes('sql') || n.includes('cifrado de datos')) {
+                return {
+                    role: 'DBA',
+                    color: 'bg-emerald-100 text-emerald-800 border-emerald-200',
+                    suggestion: 'Screenshot de consolas RDS/MongoDB, políticas de retención de backups, encripción at-rest o logs de réplicas.'
+                };
+            }
+
+            if (n.includes('servidor') || n.includes('redes') || n.includes('puertos') || n.includes('red') || n.includes('certificados') || n.includes('segregación') || n.includes('capas') || n.includes('firewall') || n.includes('vpn') || n.includes('cloud')) {
+                return {
+                    role: 'Líder de Infraestructura',
+                    color: 'bg-orange-100 text-orange-800 border-orange-200',
+                    suggestion: 'Screenshot de AWS Console (VPC Security Groups, ACM SSL/TLS, reglas de WAF/Firewall) o diagramas de red.'
+                };
+            }
+
+            if (n.includes('código') || n.includes('repositorios') || n.includes('desarrollo') || n.includes('sgsi') || n.includes('arquitectura') || n.includes('política de seguridad') || n.includes('continuidad')) {
+                return {
+                    role: 'CTO',
+                    color: 'bg-purple-100 text-purple-800 border-purple-200',
+                    suggestion: 'Screenshot de accesos a repositorios (GitHub/GitLab), políticas de PR/MR, pipelines de CI/CD o aprobaciones de arquitectura.'
+                };
+            }
+
+            if (n.includes('cvs') || n.includes('disciplinario') || n.includes('capacitación') || n.includes('universitarios') || n.includes('competencia') || n.includes('desvinculación') || n.includes('sensibilización') || n.includes('colaboradores')) {
+                return {
+                    role: 'Gestión Humana',
+                    color: 'bg-pink-100 text-pink-800 border-pink-200',
+                    suggestion: 'Listado de asistencia a capacitaciones, soportes de diplomas/certificaciones, constancias de firma de código de conducta o checklist de salida.'
+                };
+            }
+
+            if (n.includes('proveedores') || n.includes('terceros') || n.includes('proveedor') || n.includes('servicio externo') || n.includes('sla') || n.includes('evaluación de proveedores')) {
+                return {
+                    role: 'Gestión de Proveedores',
+                    color: 'bg-amber-100 text-amber-800 border-amber-200',
+                    suggestion: 'Informes de evaluación periódica de proveedores, certificaciones de seguridad de terceros (ISO/SOC2) o matriz de riesgos de proveedores.'
+                };
+            }
+
+            if (n.includes('contrato') || n.includes('nda') || n.includes('confidencialidad') || n.includes('acuerdo') || n.includes('términos y condiciones') || n.includes('legal')) {
+                return {
+                    role: 'Gestión de Contratos',
+                    color: 'bg-indigo-100 text-indigo-800 border-indigo-200',
+                    suggestion: 'Copia firmada de acuerdos de confidencialidad (NDA), cláusulas de seguridad en contratos de trabajo o contratos con clientes/proveedores.'
+                };
+            }
+
+            return {
+                role: 'Líder de TI',
+                color: 'bg-blue-100 text-blue-800 border-blue-200',
+                suggestion: 'Screenshot de políticas de contraseñas en IdP, inventario de hardware en MDM (Intune/Jamf), antivirus/EDR activo o evidencias de parches de OS.'
+            };
+        }
+
+        function parseCurl(curlText) {
+            const tokenMatch = curlText.match(/authorization:\s*Bearer\s+([^\s'\"]+)/i);
+            return { token: tokenMatch ? tokenMatch[1] : null };
+        }
+
+        async function loadEvidences() {
+            const curlText = document.getElementById('curlInput').value;
+            const { token } = parseCurl(curlText);
+
+            if (!token) {
+                alert('No se pudo extraer el token Bearer del cURL. Por favor verifica el texto pegado.');
+                return;
+            }
+
+            document.getElementById('loading').classList.remove('hidden');
+            document.getElementById('btnFetch').disabled = true;
+
+            let page = 1;
+            let totalPages = 1;
+            globalEvidences = [];
+
+            try {
+                do {
+                    const url = `https://multiframework.hackmetrix.com/evidence/getEvidenceListWithParams?search=%22%22&frameworkGuids=%5B%5D&activityGuids=%5B%5D&totalEvidences=133&perPage=50&page=${page}`;
+                    
+                    const response = await fetch(url, {
+                        headers: {
+                            'accept': 'application/json, text/plain, */*',
+                            'authorization': `Bearer ${token}`
+                        }
+                    });
+
+                    if (!response.ok) throw new Error(`HTTP Status: ${response.status}`);
+
+                    const result = await response.json();
+                    const evidences = result.data?.evidences || [];
+                    
+                    globalEvidences = globalEvidences.concat(evidences);
+                    totalPages = result.data?.pagination?.totalPages || 1;
+                    page++;
+
+                } while (page <= totalPages);
+
+                globalEvidences = globalEvidences.map(item => {
+                    const classification = classifyEvidence(item.name);
+                    const isMissing = !item.history || item.history.length === 0;
+                    const activityName = item.activities?.[0]?.name || 'Sin Actividad';
+
+                    return {
+                        guid: item.guid,
+                        name: item.name,
+                        activityName: activityName,
+                        controlCode: item.controls?.[0]?.code || 'N/A',
+                        controlName: item.controls?.[0]?.name || 'N/A',
+                        role: classification.role,
+                        roleColor: classification.color,
+                        suggestion: classification.suggestion,
+                        isMissing: isMissing,
+                        status: isMissing ? 'Falta Importar' : 'Cargado'
+                    };
+                });
+
+                populateActivityFilter();
+                document.getElementById('filterSection').classList.remove('hidden');
+                document.getElementById('stats').classList.remove('hidden');
+                applyFilters();
+
+            } catch (err) {
+                alert('Ocurrió un error al consultar la API de Hackmetrix: ' + err.message);
+            } finally {
+                document.getElementById('loading').classList.add('hidden');
+                document.getElementById('btnFetch').disabled = false;
+            }
+        }
+
+        function populateActivityFilter() {
+            const select = document.getElementById('filterActivity');
+            const activities = [...new Set(globalEvidences.map(i => i.activityName))].sort();
+
+            select.innerHTML = '<option value="ALL">Todas las Actividades</option>';
+            activities.forEach(act => {
+                select.innerHTML += `<option value="${act}">${act}</option>`;
+            });
+        }
+
+        function applyFilters() {
+            const statusFilter = document.getElementById('filterStatus').value;
+            const roleFilter = document.getElementById('filterRole').value;
+            const activityFilter = document.getElementById('filterActivity').value;
+            const searchVal = document.getElementById('searchInput').value.toLowerCase();
+
+            let filtered = globalEvidences.filter(item => {
+                const matchStatus = statusFilter === 'ALL' || 
+                                    (statusFilter === 'MISSING' && item.isMissing) || 
+                                    (statusFilter === 'LOADED' && !item.isMissing);
+
+                const matchRole = roleFilter === 'ALL' || item.role === roleFilter;
+
+                const matchActivity = activityFilter === 'ALL' || item.activityName === activityFilter;
+
+                const matchSearch = item.name.toLowerCase().includes(searchVal) || 
+                                    item.controlName.toLowerCase().includes(searchVal) ||
+                                    item.activityName.toLowerCase().includes(searchVal);
+
+                return matchStatus && matchRole && matchActivity && matchSearch;
+            });
+
+            document.getElementById('totalCount').innerText = `Total: ${globalEvidences.length}`;
+            const missingCount = globalEvidences.filter(i => i.isMissing).length;
+            document.getElementById('missingCount').innerText = `Faltan: ${missingCount}`;
+
+            renderTable(filtered);
+        }
+
+        function renderTable(data) {
+            const tbody = document.getElementById('tableBody');
+            
+            if (data.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="6" class="py-8 text-center text-slate-400">No se encontraron evidencias coincidentes</td></tr>`;
+                return;
+            }
+
+            tbody.innerHTML = data.map(item => `
+                <tr class="hover:bg-slate-50 transition-colors">
+                    <td class="py-3 px-4">
+                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${
+                            item.isMissing 
+                            ? 'bg-red-50 text-red-700 border-red-200' 
+                            : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                        }">
+                            ${item.status}
+                        </span>
+                    </td>
+                    <td class="py-3 px-4 font-medium text-slate-900">${item.name}</td>
+                    <td class="py-3 px-4 text-xs font-semibold text-slate-600">${item.activityName}</td>
+                    <td class="py-3 px-4 text-xs text-slate-500">
+                        <span class="font-bold text-slate-700">${item.controlCode}</span> - ${item.controlName}
+                    </td>
+                    <td class="py-3 px-4">
+                        <span class="inline-block px-2.5 py-1 rounded-md text-xs font-semibold border ${item.roleColor}">
+                            ${item.role}
+                        </span>
+                    </td>
+                    <td class="py-3 px-4 text-xs text-slate-600 max-w-xs">${item.suggestion}</td>
+                </tr>
+            `).join('');
+        }
+
+        function sortTable(key) {
+            sortAsc = !sortAsc;
+            globalEvidences.sort((a, b) => {
+                if (a[key] < b[key]) return sortAsc ? -1 : 1;
+                if (a[key] > b[key]) return sortAsc ? 1 : -1;
+                return 0;
+            });
+            applyFilters();
+        }
+    </script>
+</body>
+</html>
