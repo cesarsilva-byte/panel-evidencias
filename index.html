@@ -84,11 +84,12 @@
                             <th class="py-3 px-4">Código / Control</th>
                             <th class="py-3 px-4">Rol Responsable</th>
                             <th class="py-3 px-4">Captura / Evidencia Sugerida</th>
+                            <th class="py-3 px-4">Notas / Observaciones (MongoDB)</th>
                         </tr>
                     </thead>
                     <tbody id="tableBody" class="divide-y divide-slate-100 text-sm text-slate-700">
                         <tr>
-                            <td colspan="6" class="py-8 text-center text-slate-400">Pega el cURL arriba y presiona "Procesar y Cargar Evidencias"</td>
+                            <td colspan="7" class="py-8 text-center text-slate-400">Pega el cURL arriba y presiona "Procesar y Cargar Evidencias"</td>
                         </tr>
                     </tbody>
                 </table>
@@ -98,10 +99,46 @@
     </div>
 
     <script>
+        // ==========================================
+        // CONFIGURACIÓN DE TU BACKEND DE RENDER
+        // ==========================================
+        // Reemplaza esta URL con la que te otorgó Render (asegúrate de incluir /api/notes al final)
+        const API_URL = 'https://backend-evidencias.onrender.com/api/notes';
+
         let globalEvidences = [];
+        let savedNotes = {};
         let sortAsc = true;
 
-        // Clasificación por los 7 roles requeridos
+        // Cargar las notas de MongoDB al iniciar/procesar
+        async function fetchSavedNotes() {
+            try {
+                const response = await fetch(API_URL);
+                if (!response.ok) throw new Error("Error al consultar la API");
+                const notesArray = await response.json();
+                
+                savedNotes = {};
+                notesArray.forEach(item => {
+                    savedNotes[item.evidenceGuid] = item.note;
+                });
+            } catch (err) {
+                console.error("No se pudieron obtener las notas de MongoDB:", err);
+            }
+        }
+
+        // Guardar o actualizar la nota en MongoDB al escribir
+        async function saveNote(guid, text) {
+            savedNotes[guid] = text; // Actualizar local
+            try {
+                await fetch(API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ evidenceGuid: guid, note: text })
+                });
+            } catch (err) {
+                console.error("Error al guardar la nota en MongoDB:", err);
+            }
+        }
+
         function classifyEvidence(name) {
             const n = (name || '').toLowerCase();
 
@@ -182,6 +219,9 @@
             globalEvidences = [];
 
             try {
+                // Cargar notas almacenadas de MongoDB al mismo tiempo
+                await fetchSavedNotes();
+
                 do {
                     const url = `https://multiframework.hackmetrix.com/evidence/getEvidenceListWithParams?search=%22%22&frameworkGuids=%5B%5D&activityGuids=%5B%5D&totalEvidences=133&perPage=50&page=${page}`;
                     
@@ -278,7 +318,7 @@
             const tbody = document.getElementById('tableBody');
             
             if (data.length === 0) {
-                tbody.innerHTML = `<tr><td colspan="6" class="py-8 text-center text-slate-400">No se encontraron evidencias coincidentes</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="7" class="py-8 text-center text-slate-400">No se encontraron evidencias coincidentes</td></tr>`;
                 return;
             }
 
@@ -304,6 +344,13 @@
                         </span>
                     </td>
                     <td class="py-3 px-4 text-xs text-slate-600 max-w-xs">${item.suggestion}</td>
+                    <td class="py-3 px-4 text-xs">
+                        <textarea 
+                            onchange="saveNote('${item.guid}', this.value)"
+                            placeholder="Escribe una observación..."
+                            class="w-full p-1.5 border border-slate-300 rounded focus:ring-1 focus:ring-blue-500 focus:outline-none text-xs bg-slate-50 focus:bg-white transition-colors"
+                            rows="2">${savedNotes[item.guid] || ''}</textarea>
+                    </td>
                 </tr>
             `).join('');
         }
