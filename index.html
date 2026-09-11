@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Panel de Evidencias - Compliance</title>
+    <!-- Favicon de Check Verde -->
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%2316a34a'><path d='M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z'/></svg>">
     <!-- Tailwind CSS desde CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
@@ -14,7 +16,10 @@
         <!-- Header -->
         <header class="flex justify-between items-center bg-white p-6 rounded-xl shadow-sm border border-slate-200">
             <div>
-                <h1 class="text-2xl font-bold text-slate-900">Gestor de Evidencias de Certificación</h1>
+                <h1 class="text-2xl font-bold text-slate-900 flex items-center gap-2">
+                    <svg class="w-7 h-7 text-green-600" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
+                    Gestor de Evidencias de Certificación
+                </h1>
                 <p class="text-sm text-slate-500">Filtrado, asignación de roles estructurados y detección de archivos pendientes</p>
             </div>
             <div id="stats" class="hidden text-right space-x-2">
@@ -78,18 +83,19 @@
                 <table class="w-full text-left border-collapse">
                     <thead class="bg-slate-50 text-xs text-slate-500 uppercase border-b border-slate-200">
                         <tr>
+                            <th class="py-3 px-4 text-center">Aplica</th>
                             <th class="py-3 px-4">Estado</th>
                             <th class="py-3 px-4 cursor-pointer hover:bg-slate-100" onclick="sortTable('name')">Nombre Evidencia ⇅</th>
                             <th class="py-3 px-4 cursor-pointer hover:bg-slate-100" onclick="sortTable('activityName')">Actividad ⇅</th>
                             <th class="py-3 px-4">Código / Control</th>
                             <th class="py-3 px-4">Rol Responsable</th>
                             <th class="py-3 px-4">Captura / Evidencia Sugerida</th>
-                            <th class="py-3 px-4">Notas / Observaciones (MongoDB)</th>
+                            <th class="py-3 px-4 cursor-pointer hover:bg-slate-100" onclick="sortTable('note')">Notas / Observaciones (MongoDB) ⇅</th>
                         </tr>
                     </thead>
                     <tbody id="tableBody" class="divide-y divide-slate-100 text-sm text-slate-700">
                         <tr>
-                            <td colspan="7" class="py-8 text-center text-slate-400">Pega el cURL arriba y presiona "Procesar y Cargar Evidencias"</td>
+                            <td colspan="8" class="py-8 text-center text-slate-400">Pega el cURL arriba y presiona "Procesar y Cargar Evidencias"</td>
                         </tr>
                     </tbody>
                 </table>
@@ -99,35 +105,37 @@
     </div>
 
     <script>
-        // ==========================================
-        // CONFIGURACIÓN DE TU BACKEND DE RENDER
-        // ==========================================
-        // Reemplaza esta URL con la que te otorgó Render (asegúrate de incluir /api/notes al final)
         const API_URL = 'https://backend-evidencias.onrender.com/api/notes';
 
         let globalEvidences = [];
-        let savedNotes = {};
+        let dbRecords = {};
         let sortAsc = true;
 
-        // Cargar las notas de MongoDB al iniciar/procesar
         async function fetchSavedNotes() {
             try {
                 const response = await fetch(API_URL);
                 if (!response.ok) throw new Error("Error al consultar la API");
                 const notesArray = await response.json();
                 
-                savedNotes = {};
+                dbRecords = {};
                 notesArray.forEach(item => {
-                    savedNotes[item.evidenceGuid] = item.note;
+                    dbRecords[item.evidenceGuid] = {
+                        note: item.note || "",
+                        applies: item.applies !== undefined ? item.applies : true
+                    };
                 });
             } catch (err) {
-                console.error("No se pudieron obtener las notas de MongoDB:", err);
+                console.error("No se pudieron obtener los datos de MongoDB:", err);
             }
         }
 
-        // Guardar o actualizar la nota en MongoDB al escribir
         async function saveNote(guid, text) {
-            savedNotes[guid] = text; // Actualizar local
+            if (!dbRecords[guid]) dbRecords[guid] = { applies: true, note: "" };
+            dbRecords[guid].note = text;
+            
+            const item = globalEvidences.find(i => i.guid === guid);
+            if (item) item.note = text;
+
             try {
                 await fetch(API_URL, {
                     method: 'POST',
@@ -136,6 +144,26 @@
                 });
             } catch (err) {
                 console.error("Error al guardar la nota en MongoDB:", err);
+            }
+        }
+
+        async function toggleApplies(guid, isChecked) {
+            if (!dbRecords[guid]) dbRecords[guid] = { applies: true, note: "" };
+            dbRecords[guid].applies = isChecked;
+
+            const item = globalEvidences.find(i => i.guid === guid);
+            if (item) item.applies = isChecked;
+
+            applyFilters();
+
+            try {
+                await fetch(API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ evidenceGuid: guid, applies: isChecked })
+                });
+            } catch (err) {
+                console.error("Error al guardar el estado de aplica en MongoDB:", err);
             }
         }
 
@@ -219,7 +247,6 @@
             globalEvidences = [];
 
             try {
-                // Cargar notas almacenadas de MongoDB al mismo tiempo
                 await fetchSavedNotes();
 
                 do {
@@ -247,6 +274,9 @@
                     const classification = classifyEvidence(item.name);
                     const isMissing = !item.history || item.history.length === 0;
                     const activityName = item.activities?.[0]?.name || 'Sin Actividad';
+                    
+                    const applies = dbRecords[item.guid] !== undefined ? dbRecords[item.guid].applies : true;
+                    const note = dbRecords[item.guid] !== undefined ? dbRecords[item.guid].note : '';
 
                     return {
                         guid: item.guid,
@@ -258,6 +288,8 @@
                         roleColor: classification.color,
                         suggestion: classification.suggestion,
                         isMissing: isMissing,
+                        applies: applies,
+                        note: note,
                         status: isMissing ? 'Falta Importar' : 'Cargado'
                     };
                 });
@@ -308,7 +340,7 @@
             });
 
             document.getElementById('totalCount').innerText = `Total: ${globalEvidences.length}`;
-            const missingCount = globalEvidences.filter(i => i.isMissing).length;
+            const missingCount = globalEvidences.filter(i => i.isMissing && i.applies).length;
             document.getElementById('missingCount').innerText = `Faltan: ${missingCount}`;
 
             renderTable(filtered);
@@ -318,12 +350,21 @@
             const tbody = document.getElementById('tableBody');
             
             if (data.length === 0) {
-                tbody.innerHTML = `<tr><td colspan="7" class="py-8 text-center text-slate-400">No se encontraron evidencias coincidentes</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="8" class="py-8 text-center text-slate-400">No se encontraron evidencias coincidentes</td></tr>`;
                 return;
             }
 
             tbody.innerHTML = data.map(item => `
-                <tr class="hover:bg-slate-50 transition-colors">
+                <tr class="hover:bg-slate-50 transition-colors ${!item.applies ? 'opacity-50 bg-slate-50' : ''}">
+                    <td class="py-3 px-4 text-center">
+                        <input 
+                            type="checkbox" 
+                            ${item.applies ? 'checked' : ''} 
+                            onchange="toggleApplies('${item.guid}', this.checked)"
+                            class="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500 cursor-pointer"
+                            title="Desmarcar si esta evidencia NO aplica para la auditoría"
+                        >
+                    </td>
                     <td class="py-3 px-4">
                         <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${
                             item.isMissing 
@@ -349,7 +390,7 @@
                             onchange="saveNote('${item.guid}', this.value)"
                             placeholder="Escribe una observación..."
                             class="w-full p-1.5 border border-slate-300 rounded focus:ring-1 focus:ring-blue-500 focus:outline-none text-xs bg-slate-50 focus:bg-white transition-colors"
-                            rows="2">${savedNotes[item.guid] || ''}</textarea>
+                            rows="2">${item.note || ''}</textarea>
                     </td>
                 </tr>
             `).join('');
@@ -358,8 +399,20 @@
         function sortTable(key) {
             sortAsc = !sortAsc;
             globalEvidences.sort((a, b) => {
-                if (a[key] < b[key]) return sortAsc ? -1 : 1;
-                if (a[key] > b[key]) return sortAsc ? 1 : -1;
+                let valA = (a[key] || '').toString().trim();
+                let valB = (b[key] || '').toString().trim();
+
+                // Para notas: priorizar llenas vs vacías
+                if (key === 'note') {
+                    const hasNoteA = valA.length > 0;
+                    const hasNoteB = valB.length > 0;
+                    if (hasNoteA !== hasNoteB) {
+                        return sortAsc ? (hasNoteA ? -1 : 1) : (hasNoteA ? 1 : -1);
+                    }
+                }
+
+                if (valA < valB) return sortAsc ? -1 : 1;
+                if (valA > valB) return sortAsc ? 1 : -1;
                 return 0;
             });
             applyFilters();
